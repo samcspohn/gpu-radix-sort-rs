@@ -15,14 +15,12 @@
 layout (local_size_x = WORKGROUP_SIZE) in;
 
 layout (push_constant, std430) uniform PushConstants {
-    // uint g_num_elements;
     uint g_shift;
-    // uint g_num_workgroups;
-    uint g_num_blocks_per_workgroup;
+    uint g_num_workgroups;
 };
 struct PC {
     uint g_num_elements;
-    uint g_num_workgroups;
+    uint g_num_blocks_per_workgroup;
 };
 layout (std430, set = 1, binding = 5) buffer pc_ {
     PC pc;
@@ -70,7 +68,7 @@ void main() {
 
     if (lID < RADIX_SORT_BINS) {
         uint count = 0;
-        for (uint j = 0; j < pc.g_num_workgroups; j++) {
+        for (uint j = 0; j < g_num_workgroups; j++) {
             const uint t = g_histograms[RADIX_SORT_BINS * j + lID];
             local_histogram = (j == wID) ? count : local_histogram;
             count += t;
@@ -95,8 +93,8 @@ void main() {
     const uint flags_bin = lID / 32;
     const uint flags_bit = 1 << (lID % 32);
 
-    for (uint index = 0; index < g_num_blocks_per_workgroup; index++) {
-        uint elementId = wID * g_num_blocks_per_workgroup * WORKGROUP_SIZE + index * WORKGROUP_SIZE + lID;
+    for (uint index = 0; index < pc.g_num_blocks_per_workgroup; index++) {
+        uint elementId = wID * pc.g_num_blocks_per_workgroup * WORKGROUP_SIZE + index * WORKGROUP_SIZE + lID;
 
         // initialize bin flags
         if (lID < RADIX_SORT_BINS) {

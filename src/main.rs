@@ -13,7 +13,7 @@
 // been more or more used for general-purpose operations as well. This is called "General-Purpose
 // GPU", or *GPGPU*. This is what this example demonstrates.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use vulkano::{
     buffer::{Buffer, BufferCreateInfo, BufferUsage, Subbuffer},
     command_buffer::{
@@ -168,126 +168,74 @@ fn main() {
     let command_buffer_allocator =
         StandardCommandBufferAllocator::new(device.clone(), Default::default());
 
-    const NUM_ELEMENTS: u32 = 1_000_000;
-    const NUM_BLOCKS_PER_WORKGROUP: u32 = 32;
+    const NUM_ELEMENTS: u32 = 1 << 20;
+    let mut num_blocks_per_workgroup: u32 = 32;
     const WORK_GROUP_SIZE: u32 = 256;
-    const DISPATCH_SIZE: u32 = NUM_ELEMENTS.div_ceil(NUM_BLOCKS_PER_WORKGROUP);
-    const NUM_WORKGROUPS: u32 = DISPATCH_SIZE.div_ceil(WORK_GROUP_SIZE);
+    let mut dispatch_size: u32 = NUM_ELEMENTS.div_ceil(num_blocks_per_workgroup);
+    let mut num_workgroups: u32 = dispatch_size.div_ceil(WORK_GROUP_SIZE);
     println!(
         "NUM_ELEMENTS: {}, NUM_BLOCKS_PER_WORKGROUP: {}, WORK_GROUP_SIZE: {}, DISPATCH_SIZE: {}, NUM_WORKGROUPS: {}",
-        NUM_ELEMENTS, NUM_BLOCKS_PER_WORKGROUP, WORK_GROUP_SIZE, DISPATCH_SIZE, NUM_WORKGROUPS
+        NUM_ELEMENTS, num_blocks_per_workgroup, WORK_GROUP_SIZE, dispatch_size, num_workgroups
     );
     let mut numbers: Vec<_> = (0..NUM_ELEMENTS).map(|_| rand::random::<u32>()).collect();
     let mut payloads: Vec<_> = (0..NUM_ELEMENTS).map(|_| rand::random::<u32>()).collect();
     // We start by creating the buffer that will store the data.
-    let mut buffer0: Subbuffer<[u32]> = Buffer::from_iter(
-        &memory_allocator.clone(),
-        BufferCreateInfo {
-            usage: BufferUsage::STORAGE_BUFFER,
-            ..Default::default()
-        },
-        AllocationCreateInfo {
-            usage: MemoryUsage::Upload,
-            ..Default::default()
-        },
-        // Iterator that produces the data.
-        numbers.iter().cloned(),
-    )
-    .unwrap();
+    // let mut buffer0: Subbuffer<[u32]> = Buffer::from_iter(
+    //     &memory_allocator.clone(),
+    //     BufferCreateInfo {
+    //         usage: BufferUsage::STORAGE_BUFFER,
+    //         ..Default::default()
+    //     },
+    //     AllocationCreateInfo {
+    //         usage: MemoryUsage::Upload,
+    //         ..Default::default()
+    //     },
+    //     // Iterator that produces the data.
+    //     numbers.iter().cloned(),
+    // )
+    // .unwrap();
 
-    let mut buffer1: Subbuffer<[u32]> = Buffer::new_unsized(
-        &memory_allocator.clone(),
-        BufferCreateInfo {
-            usage: BufferUsage::STORAGE_BUFFER,
-            ..Default::default()
-        },
-        AllocationCreateInfo {
-            usage: MemoryUsage::DeviceOnly,
-            ..Default::default()
-        },
-        NUM_ELEMENTS as u64,
-    )
-    .unwrap();
-let mut payloads0: Subbuffer<[u32]> = Buffer::from_iter(
-    &memory_allocator.clone(),
-    BufferCreateInfo {
-        usage: BufferUsage::STORAGE_BUFFER,
-        ..Default::default()
-    },
-    AllocationCreateInfo {
-        usage: MemoryUsage::Upload,
-        ..Default::default()
-    },
-    // Iterator that produces the data.
-    payloads.iter().cloned(),
-)
-.unwrap();
+    // let mut buffer1: Subbuffer<[u32]> = Buffer::new_unsized(
+    //     &memory_allocator.clone(),
+    //     BufferCreateInfo {
+    //         usage: BufferUsage::STORAGE_BUFFER,
+    //         ..Default::default()
+    //     },
+    //     AllocationCreateInfo {
+    //         usage: MemoryUsage::DeviceOnly,
+    //         ..Default::default()
+    //     },
+    //     NUM_ELEMENTS as u64,
+    // )
+    // .unwrap();
+    // let mut payloads0: Subbuffer<[u32]> = Buffer::from_iter(
+    //     &memory_allocator.clone(),
+    //     BufferCreateInfo {
+    //         usage: BufferUsage::STORAGE_BUFFER,
+    //         ..Default::default()
+    //     },
+    //     AllocationCreateInfo {
+    //         usage: MemoryUsage::Upload,
+    //         ..Default::default()
+    //     },
+    //     // Iterator that produces the data.
+    //     payloads.iter().cloned(),
+    // )
+    // .unwrap();
 
-let mut payloads1: Subbuffer<[u32]> = Buffer::new_unsized(
-    &memory_allocator.clone(),
-    BufferCreateInfo {
-        usage: BufferUsage::STORAGE_BUFFER,
-        ..Default::default()
-    },
-    AllocationCreateInfo {
-        usage: MemoryUsage::DeviceOnly,
-        ..Default::default()
-    },
-    NUM_ELEMENTS as u64,
-)
-.unwrap();
-
-    let histograms: Subbuffer<[u32]> = Buffer::new_unsized(
-        &memory_allocator.clone(),
-        BufferCreateInfo {
-            usage: BufferUsage::STORAGE_BUFFER,
-            ..Default::default()
-        },
-        AllocationCreateInfo {
-            usage: MemoryUsage::DeviceOnly,
-            ..Default::default()
-        },
-        NUM_WORKGROUPS as u64 * 256,
-    )
-    .unwrap();
-
-    let pc: Subbuffer<cs1::PC> = Buffer::new_sized(
-        &memory_allocator,
-        BufferCreateInfo {
-            usage: BufferUsage::UNIFORM_BUFFER | BufferUsage::STORAGE_BUFFER,
-            ..Default::default()
-        },
-        AllocationCreateInfo {
-            usage: MemoryUsage::Upload,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    {
-        let mut pc_content = pc.write().unwrap();
-        pc_content.g_num_elements = NUM_ELEMENTS;
-        pc_content.g_num_workgroups = NUM_WORKGROUPS;
-    }
-
-    let indirect: Subbuffer<[DispatchIndirectCommand]> = Buffer::from_iter(
-        &memory_allocator,
-        BufferCreateInfo {
-            usage: BufferUsage::INDIRECT_BUFFER,
-            ..Default::default()
-        },
-        AllocationCreateInfo {
-            usage: MemoryUsage::Upload,
-            ..Default::default()
-        },
-        [DispatchIndirectCommand {
-            x: NUM_WORKGROUPS,
-            y: 1,
-            z: 1,
-        }]
-        .iter()
-        .cloned(),
-    )
-    .unwrap();
+    // let mut payloads1: Subbuffer<[u32]> = Buffer::new_unsized(
+    //     &memory_allocator.clone(),
+    //     BufferCreateInfo {
+    //         usage: BufferUsage::STORAGE_BUFFER,
+    //         ..Default::default()
+    //     },
+    //     AllocationCreateInfo {
+    //         usage: MemoryUsage::DeviceOnly,
+    //         ..Default::default()
+    //     },
+    //     NUM_ELEMENTS as u64,
+    // )
+    // .unwrap();
 
     // In order to let the shader access the buffer, we need to build a *descriptor set* that
     // contains the buffer.
@@ -299,140 +247,281 @@ let mut payloads1: Subbuffer<[u32]> = Buffer::new_unsized(
     // descriptor sets that each contain the buffer you want to run the shader on.
 
     // In order to execute our operation, we have to build a command buffer.
-    let hist_layout = pipeline.0.layout().set_layouts().get(0).unwrap();
-    let radix_layout = pipeline.1.layout().set_layouts().get(1).unwrap();
-    let mut builder = AutoCommandBufferBuilder::primary(
-        &command_buffer_allocator,
-        queue.queue_family_index(),
-        CommandBufferUsage::OneTimeSubmit,
-    )
-    .unwrap();
+    let mut step: i32 = 8;
+    let mut start: i32 = 4;
+    let mut end: i32 = 128 - 4 + 8;
+    let mut best = 0;
+    while step > 0 {
+        let mut times = Vec::new();
+        for n in (start..end).step_by(step as usize) {
+            // num_workgroups = n;
+            num_blocks_per_workgroup = n as u32;
 
-    for shift in (0..32).step_by(8) {
-        let hist_push = cs1::PushConstants {
-            // g_num_elements: NUM_ELEMENTS,
-            g_shift: shift,
-            // g_num_workgroups: NUM_WORKGROUPS,
-            g_num_blocks_per_workgroup: NUM_BLOCKS_PER_WORKGROUP,
-        };
-        let radix_push = cs2::PushConstants {
-            // g_num_elements: NUM_ELEMENTS,
-            g_shift: shift,
-            // g_num_workgroups: NUM_WORKGROUPS,
-            g_num_blocks_per_workgroup: NUM_BLOCKS_PER_WORKGROUP,
-        };
-        let hist_set = PersistentDescriptorSet::new(
-            &descriptor_set_allocator,
-            hist_layout.clone(),
-            [
-                WriteDescriptorSet::buffer(0, buffer0.clone()),
-                WriteDescriptorSet::buffer(1, histograms.clone()),
-                WriteDescriptorSet::buffer(5, pc.clone()),
-            ],
-        )
-        .unwrap();
-
-        let radix_set = PersistentDescriptorSet::new(
-            &descriptor_set_allocator,
-            radix_layout.clone(),
-            [
-                WriteDescriptorSet::buffer(0, buffer0.clone()),
-                WriteDescriptorSet::buffer(1, buffer1.clone()),
-                WriteDescriptorSet::buffer(3, payloads0.clone()),
-                WriteDescriptorSet::buffer(4, payloads1.clone()),
-                WriteDescriptorSet::buffer(2, histograms.clone()),
-                WriteDescriptorSet::buffer(5, pc.clone()),
-            ],
-        )
-        .unwrap();
-        builder
-            // The command buffer only does one thing: execute the compute pipeline. This is called a
-            // *dispatch* operation.
-            //
-            // Note that we clone the pipeline and the set. Since they are both wrapped in an `Arc`,
-            // this only clones the `Arc` and not the whole pipeline or set (which aren't cloneable
-            // anyway). In this example we would avoid cloning them since this is the last time we use
-            // them, but in real code you would probably need to clone them.
-            .bind_pipeline_compute(pipeline.0.clone())
-            .bind_descriptor_sets(
-                PipelineBindPoint::Compute,
-                pipeline.0.layout().clone(),
-                0,
-                hist_set,
+            dispatch_size = NUM_ELEMENTS.div_ceil(num_blocks_per_workgroup);
+            num_workgroups = dispatch_size.div_ceil(WORK_GROUP_SIZE);
+            println!(
+            "NUM_ELEMENTS: {}, NUM_BLOCKS_PER_WORKGROUP: {}, WORK_GROUP_SIZE: {}, DISPATCH_SIZE: {}, NUM_WORKGROUPS: {}",
+            NUM_ELEMENTS, num_blocks_per_workgroup, WORK_GROUP_SIZE, dispatch_size, num_workgroups);
+            let histograms: Subbuffer<[u32]> = Buffer::new_unsized(
+                &memory_allocator.clone(),
+                BufferCreateInfo {
+                    usage: BufferUsage::STORAGE_BUFFER,
+                    ..Default::default()
+                },
+                AllocationCreateInfo {
+                    usage: MemoryUsage::DeviceOnly,
+                    ..Default::default()
+                },
+                num_workgroups as u64 * 256,
             )
-            .push_constants(pipeline.0.layout().clone(), 0, hist_push)
-            .dispatch_indirect(indirect.clone())
-            // .dispatch([NUM_WORKGROUPS, 1, 1])
-            .unwrap()
-            .bind_pipeline_compute(pipeline.1.clone())
-            .bind_descriptor_sets(
-                PipelineBindPoint::Compute,
-                pipeline.1.layout().clone(),
-                1,
-                radix_set,
-            )
-            .push_constants(pipeline.1.layout().clone(), 0, radix_push)
-            .dispatch_indirect(indirect.clone())
-            // .dispatch([NUM_WORKGROUPS, 1, 1])
             .unwrap();
-        if shift < 24 {
-            std::mem::swap(&mut buffer0, &mut buffer1);
-            std::mem::swap(&mut payloads0, &mut payloads1);
+
+            let pc: Subbuffer<cs1::PC> = Buffer::new_sized(
+                &memory_allocator,
+                BufferCreateInfo {
+                    usage: BufferUsage::UNIFORM_BUFFER | BufferUsage::STORAGE_BUFFER,
+                    ..Default::default()
+                },
+                AllocationCreateInfo {
+                    usage: MemoryUsage::Upload,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            {
+                let mut pc_content = pc.write().unwrap();
+                pc_content.g_num_elements = NUM_ELEMENTS;
+                pc_content.g_num_blocks_per_workgroup = num_blocks_per_workgroup;
+                // pc_content.g_num_workgroups = num_workgroups;
+            }
+
+            let indirect: Subbuffer<[DispatchIndirectCommand]> = Buffer::from_iter(
+                &memory_allocator,
+                BufferCreateInfo {
+                    usage: BufferUsage::INDIRECT_BUFFER,
+                    ..Default::default()
+                },
+                AllocationCreateInfo {
+                    usage: MemoryUsage::Upload,
+                    ..Default::default()
+                },
+                [DispatchIndirectCommand {
+                    x: num_workgroups,
+                    y: 1,
+                    z: 1,
+                }]
+                .iter()
+                .cloned(),
+            )
+            .unwrap();
+            let mut avg = Duration::new(0, 0);
+            const ITERATIONS: u32 = 30;
+            for _ in 0..ITERATIONS {
+                let mut buffer0: Subbuffer<[u32]> = Buffer::from_iter(
+                    &memory_allocator.clone(),
+                    BufferCreateInfo {
+                        usage: BufferUsage::STORAGE_BUFFER,
+                        ..Default::default()
+                    },
+                    AllocationCreateInfo {
+                        usage: MemoryUsage::Upload,
+                        ..Default::default()
+                    },
+                    // Iterator that produces the data.
+                    numbers.iter().cloned(),
+                )
+                .unwrap();
+
+                let mut buffer1: Subbuffer<[u32]> = Buffer::new_unsized(
+                    &memory_allocator.clone(),
+                    BufferCreateInfo {
+                        usage: BufferUsage::STORAGE_BUFFER,
+                        ..Default::default()
+                    },
+                    AllocationCreateInfo {
+                        usage: MemoryUsage::DeviceOnly,
+                        ..Default::default()
+                    },
+                    NUM_ELEMENTS as u64,
+                )
+                .unwrap();
+                let mut payloads0: Subbuffer<[u32]> = Buffer::from_iter(
+                    &memory_allocator.clone(),
+                    BufferCreateInfo {
+                        usage: BufferUsage::STORAGE_BUFFER,
+                        ..Default::default()
+                    },
+                    AllocationCreateInfo {
+                        usage: MemoryUsage::Upload,
+                        ..Default::default()
+                    },
+                    // Iterator that produces the data.
+                    payloads.iter().cloned(),
+                )
+                .unwrap();
+
+                let mut payloads1: Subbuffer<[u32]> = Buffer::new_unsized(
+                    &memory_allocator.clone(),
+                    BufferCreateInfo {
+                        usage: BufferUsage::STORAGE_BUFFER,
+                        ..Default::default()
+                    },
+                    AllocationCreateInfo {
+                        usage: MemoryUsage::DeviceOnly,
+                        ..Default::default()
+                    },
+                    NUM_ELEMENTS as u64,
+                )
+                .unwrap();
+
+                let hist_layout = pipeline.0.layout().set_layouts().get(0).unwrap();
+                let radix_layout = pipeline.1.layout().set_layouts().get(1).unwrap();
+                let mut builder = AutoCommandBufferBuilder::primary(
+                    &command_buffer_allocator,
+                    queue.clone().queue_family_index(),
+                    CommandBufferUsage::OneTimeSubmit,
+                )
+                .unwrap();
+
+                for shift in (0..32).step_by(8) {
+                    let hist_push = cs1::PushConstants {
+                        g_shift: shift,
+                        g_num_workgroups: num_workgroups,
+                        // g_num_blocks_per_workgroup: num_blocks_per_workgroup,
+                    };
+                    let radix_push = cs2::PushConstants {
+                        g_shift: shift,
+                        g_num_workgroups: num_workgroups,
+                    };
+                    let hist_set = PersistentDescriptorSet::new(
+                        &descriptor_set_allocator,
+                        hist_layout.clone(),
+                        [
+                            WriteDescriptorSet::buffer(0, buffer0.clone()),
+                            WriteDescriptorSet::buffer(1, histograms.clone()),
+                            WriteDescriptorSet::buffer(5, pc.clone()),
+                        ],
+                    )
+                    .unwrap();
+
+                    let radix_set = PersistentDescriptorSet::new(
+                        &descriptor_set_allocator,
+                        radix_layout.clone(),
+                        [
+                            WriteDescriptorSet::buffer(0, buffer0.clone()),
+                            WriteDescriptorSet::buffer(1, buffer1.clone()),
+                            WriteDescriptorSet::buffer(3, payloads0.clone()),
+                            WriteDescriptorSet::buffer(4, payloads1.clone()),
+                            WriteDescriptorSet::buffer(2, histograms.clone()),
+                            WriteDescriptorSet::buffer(5, pc.clone()),
+                        ],
+                    )
+                    .unwrap();
+                    builder
+                        // The command buffer only does one thing: execute the compute pipeline. This is called a
+                        // *dispatch* operation.
+                        //
+                        // Note that we clone the pipeline and the set. Since they are both wrapped in an `Arc`,
+                        // this only clones the `Arc` and not the whole pipeline or set (which aren't cloneable
+                        // anyway). In this example we would avoid cloning them since this is the last time we use
+                        // them, but in real code you would probably need to clone them.
+                        .bind_pipeline_compute(pipeline.0.clone())
+                        .bind_descriptor_sets(
+                            PipelineBindPoint::Compute,
+                            pipeline.0.layout().clone(),
+                            0,
+                            hist_set,
+                        )
+                        .push_constants(pipeline.0.layout().clone(), 0, hist_push)
+                        .dispatch_indirect(indirect.clone())
+                        // .dispatch([NUM_WORKGROUPS, 1, 1])
+                        .unwrap()
+                        .bind_pipeline_compute(pipeline.1.clone())
+                        .bind_descriptor_sets(
+                            PipelineBindPoint::Compute,
+                            pipeline.1.layout().clone(),
+                            1,
+                            radix_set,
+                        )
+                        .push_constants(pipeline.1.layout().clone(), 0, radix_push)
+                        .dispatch_indirect(indirect.clone())
+                        // .dispatch([NUM_WORKGROUPS, 1, 1])
+                        .unwrap();
+                    if shift < 24 {
+                        std::mem::swap(&mut buffer0, &mut buffer1);
+                        std::mem::swap(&mut payloads0, &mut payloads1);
+                    }
+                    // std::mem::swap(&mut buffer0, &mut buffer1);
+                }
+
+                // Finish building the command buffer by calling `build`.
+                let command_buffer = builder.build().unwrap();
+
+                let t = std::time::Instant::now();
+                // Let's execute this command buffer now.
+                let future = sync::now(device.clone())
+                    .then_execute(queue.clone(), command_buffer)
+                    .unwrap()
+                    // This line instructs the GPU to signal a *fence* once the command buffer has finished
+                    // execution. A fence is a Vulkan object that allows the CPU to know when the GPU has
+                    // reached a certain point. We need to signal a fence here because below we want to block
+                    // the CPU until the GPU has reached that point in the execution.
+                    .then_signal_fence_and_flush()
+                    .unwrap();
+
+                // Blocks execution until the GPU has finished the operation. This method only exists on the
+                // future that corresponds to a signalled fence. In other words, this method wouldn't be
+                // available if we didn't call `.then_signal_fence_and_flush()` earlier. The `None` parameter
+                // is an optional timeout.
+                //
+                // Note however that dropping the `future` variable (with `drop(future)` for example) would
+                // block execution as well, and this would be the case even if we didn't call
+                // `.then_signal_fence_and_flush()`. Therefore the actual point of calling
+                // `.then_signal_fence_and_flush()` and `.wait()` is to make things more explicit. In the
+                // future, if the Rust language gets linear types vulkano may get modified so that only
+                // fence-signalled futures can get destroyed like this.
+                future.wait(None).unwrap();
+
+                let elapsed = t.elapsed();
+                avg += elapsed;
+            }
+            avg /= ITERATIONS;
+            println!("Elapsed: {:?}", avg);
+            times.push((n, avg, num_workgroups));
         }
-        // std::mem::swap(&mut buffer0, &mut buffer1);
+        println!("{}", "-".repeat(80));
+        times.sort_by_key(|(_, a, _)| *a);
+        best = times[0].2;
+        start = (times[0].0 - step * 2).max(1);
+        end = times[0].0 + step * 2;
+        step /= 2;
     }
+    println!("best: {}", best);
 
-    // Finish building the command buffer by calling `build`.
-    let command_buffer = builder.build().unwrap();
+    // // Now that the GPU is done, the content of the buffer should have been modified. Let's check
+    // // it out. The call to `read()` would return an error if the buffer was still in use by the
+    // // GPU.
+    // let mut numbers_payload = numbers.iter().zip(payloads.iter()).map(|(n, p)| (*n, *p)).collect::<Vec<_>>();
+    // numbers_payload.sort_by_key(|(n, _)| *n);
+    // numbers.sort();
+    // let data_buffer_content = buffer1.read().unwrap();
+    // let payloads_content = payloads1.read().unwrap();
+    // // println!("numbers: {:?}", &numbers);
+    // // println!("data_buffer_content: {:?}", &data_buffer_content[..]);
+    // println!("first 10 numbers: {:?}", &numbers[0..10]);
+    // println!(
+    //     "first 10 numbers of buffer: {:?}",
+    //     &data_buffer_content[0..10]
+    // );
+    // println!(
+    //     "last 10 numbers of buffer: {:?}",
+    //     &data_buffer_content[NUM_ELEMENTS as usize - 10..]
+    // );
+    // // data_buffer_content.sort();
+    // for i in 0..NUM_ELEMENTS as usize {
+    //     assert_eq!(numbers_payload[i].0, data_buffer_content[i]);
+    //     assert_eq!(numbers_payload[i].1, payloads_content[i]);
+    // }
 
-    // Let's execute this command buffer now.
-    let future = sync::now(device)
-        .then_execute(queue, command_buffer)
-        .unwrap()
-        // This line instructs the GPU to signal a *fence* once the command buffer has finished
-        // execution. A fence is a Vulkan object that allows the CPU to know when the GPU has
-        // reached a certain point. We need to signal a fence here because below we want to block
-        // the CPU until the GPU has reached that point in the execution.
-        .then_signal_fence_and_flush()
-        .unwrap();
-
-    // Blocks execution until the GPU has finished the operation. This method only exists on the
-    // future that corresponds to a signalled fence. In other words, this method wouldn't be
-    // available if we didn't call `.then_signal_fence_and_flush()` earlier. The `None` parameter
-    // is an optional timeout.
-    //
-    // Note however that dropping the `future` variable (with `drop(future)` for example) would
-    // block execution as well, and this would be the case even if we didn't call
-    // `.then_signal_fence_and_flush()`. Therefore the actual point of calling
-    // `.then_signal_fence_and_flush()` and `.wait()` is to make things more explicit. In the
-    // future, if the Rust language gets linear types vulkano may get modified so that only
-    // fence-signalled futures can get destroyed like this.
-    future.wait(None).unwrap();
-
-    // Now that the GPU is done, the content of the buffer should have been modified. Let's check
-    // it out. The call to `read()` would return an error if the buffer was still in use by the
-    // GPU.
-    let mut numbers_payload = numbers.iter().zip(payloads.iter()).map(|(n, p)| (*n, *p)).collect::<Vec<_>>();
-    numbers_payload.sort_by_key(|(n, _)| *n);
-    numbers.sort();
-    let data_buffer_content = buffer1.read().unwrap();
-    let payloads_content = payloads1.read().unwrap();
-    // println!("numbers: {:?}", &numbers);
-    // println!("data_buffer_content: {:?}", &data_buffer_content[..]);
-    println!("first 10 numbers: {:?}", &numbers[0..10]);
-    println!(
-        "first 10 numbers of buffer: {:?}",
-        &data_buffer_content[0..10]
-    );
-    println!(
-        "last 10 numbers of buffer: {:?}",
-        &data_buffer_content[NUM_ELEMENTS as usize - 10..]
-    );
-    // data_buffer_content.sort();
-    for i in 0..NUM_ELEMENTS as usize {
-        assert_eq!(numbers_payload[i].0, data_buffer_content[i]);
-        assert_eq!(numbers_payload[i].1, payloads_content[i]);
-    }
-
-    println!("Success");
+    // println!("Success");
 }
